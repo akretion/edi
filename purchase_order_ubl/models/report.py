@@ -11,23 +11,31 @@ logger = logging.getLogger(__name__)
 class Report(models.Model):
     _inherit = "report"
 
-    @api.model
-    def get_pdf(self, docids, report_name, html=None, data=None):
+    @api.v7
+    def get_pdf(
+            self, cr, uid, ids, report_name, html=None, data=None,
+            context=None):
         """We go through that method when the PDF is generated for the 1st
         time and also when it is read from the attachment.
         This method is specific to QWeb"""
-        purchases = self.env["purchase.order"].browse(docids)
+        if context is None:
+            context = {}
         pdf_content = super(Report, self).get_pdf(
-            purchases, report_name, html=html, data=data
-        )
+            cr, uid, ids, report_name, html=html, data=data, context=context)
         purchase_reports = [
-            "purchase.report_purchaseorder",
-            "purchase.report_purchasequotation",
-        ]
+            'purchase.report_purchaseorder',
+            'purchase.report_purchasequotation']
         if (
-            report_name in purchase_reports
-            and len(docids) == 1
-            and not self.env.context.get("no_embedded_ubl_xml")
-        ):
-            pdf_content = purchases[0].embed_ubl_xml_in_pdf(pdf_content=pdf_content)
+                report_name in purchase_reports and
+                len(ids) == 1 and
+                not context.get('no_embedded_ubl_xml')):
+            order = self.pool['purchase.order'].browse(
+                cr, uid, ids[0], context=context)
+            pdf_content = order.embed_ubl_xml_in_pdf(
+                pdf_content)
         return pdf_content
+
+    @api.v8  # noqa
+    def get_pdf(self, records, report_name, html=None, data=None):
+        return self._model.get_pdf(self._cr, self._uid, records.ids,
+                              report_name, html=html, data=data, context=self._context)

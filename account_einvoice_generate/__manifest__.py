@@ -4,7 +4,7 @@
 
 {
     "name": "Account e-invoice Generate",
-    "version": "13.0.1.0.0",
+    "version": "14.0.1.0.0",
     "category": "Accounting & Finance",
     "license": "AGPL-3",
     "summary": "Technical module to generate PDF invoices with " "embedded XML file",
@@ -12,7 +12,7 @@
     "maintainers": ["alexis-via"],
     "website": "https://github.com/OCA/edi",
     "depends": ["account"],
-    "excludes": ["account_facturx"],
+    "excludes": ["account_edi"],
     "data": ["views/res_config_settings.xml"],
     "installable": True,
 }

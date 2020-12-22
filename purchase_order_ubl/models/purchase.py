@@ -42,6 +42,9 @@ class PurchaseOrder(models.Model):
         if doc_type == 'rfq':  # IssueTime is required on RFQ, not on order
             issue_time = etree.SubElement(parent_node, ns['cbc'] + 'IssueTime')
             issue_time.text = time
+        if self.origin:
+            origin = etree.SubElement(parent_node, ns["cbc"] + "CustomerReference")
+            origin.text = self.origin
         if self.notes:
             note = etree.SubElement(parent_node, ns['cbc'] + 'Note')
             note.text = self.notes

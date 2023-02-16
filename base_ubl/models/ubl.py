@@ -2,7 +2,7 @@
 # © 2016 Akretion (Alexis de Lattre <alexis.delattre@akretion.com>)
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
-from openerp import models, api, tools, _
+from openerp import fields, models, api, tools, _
 from openerp.exceptions import Warning as UserError
 from openerp.tools import float_is_zero, float_round
 from lxml import etree
@@ -343,7 +343,15 @@ class BaseUbl(models.AbstractModel):
                 if seller:
                     sellers = self.env['product.supplierinfo'].search([
                         ('name', '=', seller.id),
-                        ('product_tmpl_id', '=', product.product_tmpl_id.id)])
+                        ('product_tmpl_id', '=', product.product_tmpl_id.id),
+                        # Quick and dirty hack before migration
+                        '|',
+                        ('date_end', '=', False),
+                        ('date_end', '>', fields.Date.today().strftime("%Y-%m-%d")),
+                        '|',
+                        ('date_start', '=', False),
+                        ('date_start', '<', fields.Date.today().strftime("%Y-%m-%d")),
+                        ])
                     if sellers:
                         product_name = sellers[0].product_name
                         seller_code = sellers[0].product_code

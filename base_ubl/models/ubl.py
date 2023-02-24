@@ -347,10 +347,10 @@ class BaseUbl(models.AbstractModel):
                         # Quick and dirty hack before migration
                         '|',
                         ('date_end', '=', False),
-                        ('date_end', '>', fields.Date.today().strftime("%Y-%m-%d")),
+                        ('date_end', '>', fields.Date.today()),
                         '|',
                         ('date_start', '=', False),
-                        ('date_start', '<', fields.Date.today().strftime("%Y-%m-%d")),
+                        ('date_start', '<', fields.Date.today()),
                         ])
                     if sellers:
                         product_name = sellers[0].product_name

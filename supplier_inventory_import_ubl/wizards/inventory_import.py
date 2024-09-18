@@ -39,7 +39,10 @@ class InventoryUblImport(models.TransientModel):
             raise UserError(_("This XML file is not XML-compliant"))
         if logger.isEnabledFor(logging.DEBUG):
             pretty_xml_string = etree.tostring(
-                xml_root, pretty_print=True, encoding="UTF-8", xml_declaration=True,
+                xml_root,
+                pretty_print=True,
+                encoding="UTF-8",
+                xml_declaration=True,
             )
             logger.debug("Starting to import the following XML file:")
             logger.debug(pretty_xml_string)
@@ -103,20 +106,27 @@ class InventoryUblImport(models.TransientModel):
         std_id_xph = line_node.xpath(
             "cac:Item/cac:StandardItemIdentification/cbc:ID", namespaces=ns
         )
+        avail_xph = line_node.xpath("cbc:AvailabilityDate", namespaces=ns)
+
+        def extract(xph):
+            return xph and xph[0].text or False
+
+        availability = extract(avail_xph)
         return {
-            "stock": stock_xph and stock_xph[0].text or False,
-            "def_code": buyer_id_xph and buyer_id_xph[0].text or False,
-            "sup_code": seller_id_xph and seller_id_xph[0].text or False,
-            "barcode": std_id_xph and std_id_xph[0].text or False,
+            "stock": extract(stock_xph),
+            "def_code": extract(buyer_id_xph),
+            "sup_code": extract(seller_id_xph),
+            "barcode": extract(std_id_xph),
+            "availability": availability,
         }
 
     @api.model
     def process_data(self, parsed_document):
-        """ Tasks:
-            - guess supplier/seller
-            - guess customer/buyer for multicompany context (not implemented in v8)
-            - retrieve relative data with product.supplierinfo and product.product
-            - write stock by on supplierinfo and/or product.product
+        """Tasks:
+        - guess supplier/seller
+        - guess customer/buyer for multicompany context (not implemented in v8)
+        - retrieve relative data with product.supplierinfo and product.product
+        - write stock by on supplierinfo and/or product.product
         """
         logger.debug(parsed_document)
         feedback = {}
@@ -129,9 +139,9 @@ class InventoryUblImport(models.TransientModel):
 
         # extract stock from provided data in file
         def _populate_stock_by_code(prd_lines, key):
-            """ Some products may appear several times in report
-                because of different lot or location
-                then we sum quantities
+            """Some products may appear several times in report
+            because of different lot or location
+            then we sum quantities
             """
             stk = defaultdict(float)
             for line in prd_lines:
@@ -166,7 +176,7 @@ class InventoryUblImport(models.TransientModel):
                 )
             )
         feedback["productinfo"] = self._extract_data_and_update_product(
-            sql_result, stock_by, supplier, inventory_date
+            sql_result, stock_by, supplier, inventory_date, prd_lines
         )
         feedback["supplierinfo"] = self._extract_data_and_update_supplierinfo(
             sql_result, stock_by, supplier, inventory_date
@@ -186,7 +196,7 @@ class InventoryUblImport(models.TransientModel):
         stock_by: dict, example:
             {'sup_code': {'BLA': 7.0, 'MYCD': 15.0},
              'def_code': {'CD': 15.0, 'BRA': 7.0}
-             'bardode': {...} }
+             'barcode': {...} }
         """
         sql_field_names = {
             "def_code": "pp.default_code",
@@ -217,7 +227,7 @@ class InventoryUblImport(models.TransientModel):
         return self.env.cr.dictfetchall()
 
     def _extract_data_and_update_product(
-        self, data, stock_by, supplier, inventory_date
+        self, data, stock_by, supplier, inventory_date, product_from_doc=None
     ):
         """
         Common docstrings to both _extract_data_...() method
@@ -306,19 +316,31 @@ class InventoryUblImport(models.TransientModel):
                     ]
                 )
             return prds
+
+        # Find availability
+        avail_by_prd = {}
+        for line in product_from_doc:
+            if (
+                line.get("availability")
+                and line["availability"] >= fields.Date.today()
+                and line.get("def_code")
+                and prd_by_def_code.get(line["def_code"])
+            ):
+                avail_by_prd[prd_by_def_code[line["def_code"]][0]] = line[
+                    "availability"
+                ]
         # Update products
         products = _find_product(prd_by_def_code, "def_code")
         products |= _find_product(prd_by_barcode, "barcode")
         products._update_supplier_stock_from_ubl_inventory(
-            supplier, stk_by_product, inventory_date
+            supplier, stk_by_product, inventory_date, avail_by_prd
         )
         return products.ids
 
     def _extract_data_and_update_supplierinfo(
         self, data, stock_by, supplier, inventory_date
     ):
-        """ see _extract_data_and_update_product() docstring
-        """
+        """see _extract_data_and_update_product() docstring"""
         sinfo_by_sup_code = defaultdict(list)
         stock_by_tmpl = {}
         for row in data:
@@ -404,8 +426,8 @@ class InventoryUblImport(models.TransientModel):
         return list(set(codes) - set(erp_supplier_codes))
 
     def _process_feedback(self, feedback):
-        """ Process here are generics: you may behavior by
-            customizing set_feedback_records() method
+        """Process here are generics: you may behavior by
+        customizing set_feedback_records() method
         """
         records = self.set_feedback_records(feedback)
         if feedback.get("unmatch_codes"):
@@ -417,8 +439,8 @@ class InventoryUblImport(models.TransientModel):
             )
 
     def set_feedback_records(self, feedback):
-        """ Inherit to provide feedback to concerned users
-            with the mean you choose
+        """Inherit to provide feedback to concerned users
+        with the mean you choose
         """
         return {
             "unmatch_codes": self.env["res.partner"].browse(feedback["supplier"]),

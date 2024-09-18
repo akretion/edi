@@ -22,6 +22,7 @@ class ProductSupplierinfo(models.Model):
     product_default_code = fields.Char(
         string="Internal reference", store=False,
         compute="_compute_product_default_code", help="Default code of product")
+    back_in_stock = fields.Date(help="Back in supplier stock")
 
     @api.multi
     def _update_supplier_stock_from_ubl_inventory(

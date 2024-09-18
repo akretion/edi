@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# © 2020 David BEAL @ Akretion
+# © 2020 David BEAL @ Akretion
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl.html).
 
 from openerp import _, api, fields, models
@@ -29,6 +29,23 @@ class ProductTemplate(models.Model):
         help=HELP_INF + "\nIf ⚠ is displayed, check supplier stock on variants to get "
         "specific stock information on a particular product",
     )
+    back_in_stock = fields.Date(
+        string="Back in supplier stock",
+        readonly=True,
+        store=True,
+        compute="_compute_back_in_stock",
+    )
+
+    @api.multi
+    @api.depends("product_variant_ids.back_in_stock")
+    def _compute_back_in_stock(self):
+        for rec in self:
+            back_in_stock = set([x.back_in_stock for x in rec.product_variant_ids])
+            if len(back_in_stock) == 1:
+                rec.back_in_stock = back_in_stock.pop()
+            else:
+                # if several dates we don't set field
+                rec.back_in_stock = "⚠"
 
     @api.multi
     @api.depends("product_variant_ids.supplier_stock")
@@ -61,19 +78,28 @@ class ProductProduct(models.Model):
         readonly=True,
         help=HELP_INF,
     )
+    back_in_stock = fields.Date(
+        string="Back in supplier stock", help="Back in supplier stock"
+    )
 
     @api.multi
     def _update_supplier_stock_from_ubl_inventory(
-        self, supplier, stock_by_product, update_date
+        self, supplier, stock_by_product, update_date, avail_by_prd
     ):
         info = self._set_stock_info_from_ubl_inventory(supplier, update_date)
         for rec in self:
-            rec.write(
-                {
-                    "supplier_stock": stock_by_product[rec.id],
-                    "supplier_stock_info": info,
-                }
-            )
+            vals = {
+                "supplier_stock": stock_by_product[rec.id],
+                "supplier_stock_info": info,
+            }
+            if rec.id in avail_by_prd:
+                vals["back_in_stock"] = avail_by_prd[rec.id]
+            rec.write(vals)
+            # We also write on supplier info
+            rec.seller_ids.filtered(
+                lambda s: s.name == supplier
+                and s.product_tmpl_id == rec.product_tmpl_id
+            ).write({"back_in_stock": rec.back_in_stock})
 
     @api.model
     def _set_stock_info_from_ubl_inventory(self, supplier, update_date):

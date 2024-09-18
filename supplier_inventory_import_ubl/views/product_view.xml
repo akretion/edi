@@ -13,6 +13,9 @@
                     <field name="supplier_stock" class="oe_inline" />
                     <field name="supplier_stock_info" nolabel="1" />
                 </div>
+                <group>
+                    <field name="back_in_stock" class="oe_inline" />
+                </group>
             </xpath>
         </field>
     </record>
@@ -22,6 +25,7 @@
         <field name="inherit_id" ref="product.product_template_tree_view" />
         <field name="arch" type="xml">
             <field name="virtual_available" position="after">
+                <field name="back_in_stock" />
                 <field name="supplier_stock" />
                 <field name="supplier_stock_info" string="Supplier Inventory" />
             </field>

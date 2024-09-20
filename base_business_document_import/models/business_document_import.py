@@ -390,38 +390,6 @@ class BusinessDocumentImport(models.AbstractModel):
         customer/supplier (partner argument)
         """
         domain = domain or []
-        if partner_dict.get("street"):
-            if partner_dict.get("street_number"):
-                domain += [
-                    (
-                        "street",
-                        "in",
-                        [
-                            "{} {}".format(
-                                partner_dict.get("street"),
-                                partner_dict.get("street_number"),
-                            ),
-                            "{} {}".format(
-                                partner_dict.get("street_number"),
-                                partner_dict.get("street"),
-                            ),
-                            "{}, {}".format(
-                                partner_dict.get("street"),
-                                partner_dict.get("street_number"),
-                            ),
-                            "{}, {}".format(
-                                partner_dict.get("street_number"),
-                                partner_dict.get("street"),
-                            ),
-                        ],
-                    )
-                ]
-            else:
-                domain += [("street", "=", partner_dict.get("street"))]
-        if partner_dict.get("street2"):
-            domain += [("street2", "=", partner_dict.get("street2"))]
-        if partner_dict.get("city"):
-            domain += [("city", "=", partner_dict.get("city"))]
         if partner_dict.get("zip"):
             domain += [("zip", "=", partner_dict.get("zip"))]
 
@@ -466,9 +434,6 @@ class BusinessDocumentImport(models.AbstractModel):
                 "Reference: %s\n"
                 "E-mail: %s\n"
                 "Website: %s\n"
-                "Street: %s\n"
-                "Street2: %s\n"
-                "City: %s\n"
                 "ZIP: %s\n"
                 "State code: %s\n"
                 "Country code: %s\n"

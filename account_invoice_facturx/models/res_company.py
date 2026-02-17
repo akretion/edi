@@ -44,6 +44,9 @@ class ResCompany(models.Model):
     # because I think many users may not want to have the facturx logo,
     # but I continue to provide the field 'facturx_logo'
 
+    # specific field
+    company_ref = fields.Char(help="Utilisé pour factur-X")
+
     def _compute_facturx_logo(self):
         level2logo = {
             "minimum": "factur-x-minimum.png",

@@ -203,6 +203,21 @@ class AccountMove(models.Model):
             self.invoice_user_id.partner_id or company.partner_id, seller, ns
         )
         self._cii_add_address_block(company.partner_id, seller, ns)
+
+        fr_directory_exists = hasattr(
+            company.partner_id, "default_fr_directory_line_id"
+        )
+        if fr_directory_exists and company.partner_id.default_fr_directory_line_id:
+            seller_dir_line_node = etree.SubElement(
+                seller, ns["ram"] + "URIUniversalCommunication"
+            )
+            dir_line_uriid = etree.SubElement(
+                seller_dir_line_node, ns["ram"] + "URIID", schemeID="0225"
+            )
+            dir_line_uriid.text = (
+                company.partner_id.default_fr_directory_line_id.identifier
+            )
+
         if company.vat:
             seller_tax_reg = etree.SubElement(
                 seller, ns["ram"] + "SpecifiedTaxRegistration"
@@ -221,6 +236,14 @@ class AccountMove(models.Model):
         if self.commercial_partner_id != self.partner_id and self.partner_id.name:
             self._cii_add_trade_contact_block(self.partner_id, buyer, ns)
         self._cii_add_address_block(self.partner_id, buyer, ns)
+        if fr_directory_exists and self.fr_directory_line_id:
+            buyer_dir_line_node = etree.SubElement(
+                buyer, ns["ram"] + "URIUniversalCommunication"
+            )
+            dir_line_uriid = etree.SubElement(
+                buyer_dir_line_node, ns["ram"] + "URIID", schemeID="0225"
+            )
+            dir_line_uriid.text = self.fr_directory_line_id.identifier
         if self.commercial_partner_id.vat:
             buyer_tax_reg = etree.SubElement(
                 buyer, ns["ram"] + "SpecifiedTaxRegistration"

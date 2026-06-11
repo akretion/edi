@@ -129,6 +129,7 @@ class AccountMove(models.Model):
         )
         ctx_param_id = etree.SubElement(ctx_param, ns["ram"] + "ID")
         urn = "urn:cen.eu:en16931:2017#conformant#urn:factur-x.eu:1p0:extended"
+        #        urn = "urn:cen.eu:en16931:2017"  # for CII
         ctx_param_id.text = urn
 
     def _cii_add_header_block(self, root, ns):
@@ -207,16 +208,14 @@ class AccountMove(models.Model):
         fr_directory_exists = hasattr(
             company.partner_id, "default_fr_directory_line_id"
         )
-        if fr_directory_exists and company.partner_id.default_fr_directory_line_id:
+        if fr_directory_exists and self.company_fr_directory_line_id:
             seller_dir_line_node = etree.SubElement(
                 seller, ns["ram"] + "URIUniversalCommunication"
             )
             dir_line_uriid = etree.SubElement(
                 seller_dir_line_node, ns["ram"] + "URIID", schemeID="0225"
             )
-            dir_line_uriid.text = (
-                company.partner_id.default_fr_directory_line_id.identifier
-            )
+            dir_line_uriid.text = self.company_fr_directory_line_id.identifier
 
         if company.vat:
             seller_tax_reg = etree.SubElement(

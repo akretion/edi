@@ -199,9 +199,12 @@ class AccountMove(models.Model):
             )
             buyer_reference.text = buyer_ref
         seller = etree.SubElement(trade_agreement, ns["ram"] + "SellerTradeParty")
-        seller_name = etree.SubElement(seller, ns["ram"] + "Name")
         # CUSTOM: SWITCH BETWEEN BUYER AND SELLER HERE
         cial_partner = self.commercial_partner_id
+        if cial_partner.ref:
+            seller_id = etree.SubElement(seller, ns["ram"] + "ID")
+            seller_id.text = cial_partner.ref
+        seller_name = etree.SubElement(seller, ns["ram"] + "Name")
         # seller_name.text = company.name
         seller_name.text = cial_partner.name
         # self._cii_add_party_identification(company.partner_id, seller, ns)

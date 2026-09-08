@@ -437,28 +437,33 @@ class AccountInvoiceImport(models.TransientModel):
                 product = product.with_company(import_config["company"].id)
                 if parsed_inv["type"] in ("out_invoice", "out_refund"):
                     account = product._get_product_accounts()["income"]
-                    product_taxes = product.taxes_id
                 else:
                     account = product._get_product_accounts()["expense"]
+            else:
+                account = import_config["account"]
+
+            if parsed_inv["type"] in ("out_invoice", "out_refund"):
+                type_tax_use = "sale"
+            else:
+                type_tax_use = "purchase"
+            taxes = bdio._match_taxes(
+                line.get("taxes"),
+                parsed_inv["chatter_msg"],
+                company=import_config["company"],
+                type_tax_use=type_tax_use,
+                raise_exception=False,
+            )
+            if not taxes and product:
+                if parsed_inv["type"] in ("out_invoice", "out_refund"):
+                    product_taxes = product.taxes_id
+                else:
                     product_taxes = product.supplier_taxes_id
+
                 taxes = product_taxes.filtered(
                     lambda tax: tax.company_id == import_config["company"]
                 )
-            else:
-                account = import_config["account"]
-                taxes = import_config["taxes"]
             if not taxes:
-                if parsed_inv["type"] in ("out_invoice", "out_refund"):
-                    type_tax_use = "sale"
-                else:
-                    type_tax_use = "purchase"
-                taxes = bdio._match_taxes(
-                    line.get("taxes"),
-                    parsed_inv["chatter_msg"],
-                    company=import_config["company"],
-                    type_tax_use=type_tax_use,
-                    raise_exception=False,
-                )
+                taxes = import_config["taxes"]
 
             fp = partner and partner.property_account_position_id or False
             if fp:

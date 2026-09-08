@@ -470,6 +470,20 @@ class AccountInvoiceImport(models.TransientModel):
                 product=product,
                 raise_exception=False,
             )
+            if product and product.uom_id.category_id != uom.category_id:
+                parsed_inv["chatter_msg"].append(
+                    self.env._(
+                        "Matched UoM is <strong>%(matched_uom)s</strong>, but this "
+                        "UoM doesn't belong to the same category as UoM "
+                        "<strong>%(product_uom)s</strong> configured on product "
+                        "<em>%(product)s</em>. So Odoo has set the UoM of the product "
+                        "(%(product_uom)s).",
+                        matched_uom=uom.display_name,
+                        product_uom=product.uom_id.display_name,
+                        product=product.display_name,
+                    )
+                )
+                uom = product.uom_id
 
             il_vals = {
                 "display_type": "product",

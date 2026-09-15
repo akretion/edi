@@ -7,3 +7,4 @@ pymupdf
 pypdf
 pypdf>=3.1.0
 regex
+unicodecsv

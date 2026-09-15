@@ -21,65 +21,65 @@ class SaleOrderImport(models.TransientModel):
     @api.model
     def parse_csv_order(self, order_file, partner):
         assert partner, "missing partner"
-        fileobj = TemporaryFile("wb+")
-        fileobj.write(order_file)
-        fileobj.seek(0)
-        reader = unicodecsv.reader(
-            fileobj, delimiter=";", quoting=unicodecsv.QUOTE_MINIMAL, encoding="utf8"
-        )
-        i = 0
-        parsed_order = {
-            "partner": {"recordset": partner},
-            "lines": [],
-        }
-        precision = self.env["decimal.precision"].precision_get(
-            "Product Unit of Measure"
-        )
-        for line in reader:
-            logger.debug("csv line %d: %s", i, line)
-            i += 1
-            if len(line) < 2:
-                raise UserError(
-                    _(
-                        "Error on line %d of the CSV file: this line should have "
-                        "a product code and a quantity, separated by a "
-                        "semi-colon."
-                    )
-                    % i
-                )
-            if not line[0]:
-                raise UserError(
-                    _(
-                        "Error on line %d of the CSV file: the line should start "
-                        "with a product code"
-                    )
-                    % i
-                )
-            try:
-                qty = float(line[1])
-            except UserError:
-                raise UserError(
-                    _(
-                        "Error on line %d of the CSV file: the second column "
-                        "should contain a quantity. The quantity should use dot "
-                        "as decimal separator and shouldn't have any thousand "
-                        "separator"
-                    )
-                    % i
-                )
-            if float_compare(qty, 0, precision_digits=precision) != 1:
-                raise UserError(
-                    _(
-                        "Error on line %d of the CSV file: the quantity should "
-                        "be strictly positive"
-                    )
-                    % i
-                )
-            parsed_order["lines"].append(
-                {
-                    "qty": qty,
-                    "product": {"code": line[0]},
-                }
+        with TemporaryFile("wb+") as fileobj:
+            fileobj.write(order_file)
+            fileobj.seek(0)
+            reader = unicodecsv.reader(
+                fileobj,
+                delimiter=";",
+                quoting=unicodecsv.QUOTE_MINIMAL,
+                encoding="utf8",
             )
-        fileobj.close()
+            parsed_order = {
+                "partner": {"recordset": partner},
+                "lines": [],
+            }
+            precision = self.env["decimal.precision"].precision_get(
+                "Product Unit of Measure"
+            )
+            for i, line in enumerate(reader):
+                logger.debug("csv line %d: %s", i, line)
+                if len(line) < 2:
+                    raise UserError(
+                        _(
+                            "Error on line %d of the CSV file: this line should have "
+                            "a product code and a quantity, separated by a "
+                            "semi-colon."
+                        )
+                        % i
+                    )
+                if not line[0]:
+                    raise UserError(
+                        _(
+                            "Error on line %d of the CSV file: the line should start "
+                            "with a product code"
+                        )
+                        % i
+                    )
+                try:
+                    qty = float(line[1])
+                except UserError:
+                    raise UserError(
+                        _(
+                            "Error on line %d of the CSV file: the second column "
+                            "should contain a quantity. The quantity should use dot "
+                            "as decimal separator and shouldn't have any thousand "
+                            "separator"
+                        )
+                        % i
+                    ) from UserError
+                if float_compare(qty, 0, precision_digits=precision) != 1:
+                    raise UserError(
+                        _(
+                            "Error on line %d of the CSV file: the quantity should "
+                            "be strictly positive"
+                        )
+                        % i
+                    )
+                parsed_order["lines"].append(
+                    {
+                        "qty": qty,
+                        "product": {"code": line[0]},
+                    }
+                )
         return parsed_order

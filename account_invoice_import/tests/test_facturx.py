@@ -73,7 +73,10 @@ class TestFacturx(TransactionCase):
         )
 
     # avoid warning logs pypdf._reader: incorrect startxref pointer(1)
-    @mute_logger("pypdf._reader")
+    @mute_logger(
+        "pypdf._reader",
+        "odoo.addons.account_invoice_import.wizard.account_invoice_import",
+    )
     def test_import_facturx_invoice(self):
         sample_files = {
             "Facture_FR_BASICWL.pdf": {
@@ -101,9 +104,7 @@ class TestFacturx(TransactionCase):
         amo = self.env["account.move"]
         cur = self.env.ref("base.EUR")
         for inv_file, res_dict in sample_files.items():
-            f = file_open(
-                "account_invoice_import_facturx/tests/files/" + inv_file, "rb"
-            )
+            f = file_open("account_invoice_import/tests/pdf/" + inv_file, "rb")
             pdf_file = f.read()
             f.close()
             wiz = self.env["account.invoice.import"].create(

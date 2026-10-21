@@ -183,7 +183,7 @@ class TestInvoiceImport(TransactionCase):
             )
             self.assertEqual(inv.journal_id.id, self.pur_journal2.id)
 
-    def test_import_in_invoice_with_global_adjustment(self):
+    def test_import_in_invoice_with_global_adjustments(self):
         parsed_inv = {
             "BT-1": "TESTAIIGLOBAL",
             "BT-2": "2023-04-08",
@@ -202,7 +202,17 @@ class TestInvoiceImport(TransactionCase):
                     "BT-152": 1.0,
                     "BT-153": "Super test product",
                     "BT-156": "AII-TEST-PRODUCT",
-                }
+                },
+                {
+                    "BT-126": "2",
+                    "BT-129": 1,
+                    "BT-131": 10.0,
+                    "BT-146": 10.0,
+                    "BT-151": "S",
+                    "BT-152": 2.0,  # other vat rate => 2nd adjustment line
+                    "BT-153": "Other test product",
+                    "BT-156": "AII-OTHER-PRODUCT",
+                },
             ],
         }
         import_config = {"company": self.company}
@@ -216,8 +226,8 @@ class TestInvoiceImport(TransactionCase):
         self.assertFalse(
             inv.currency_id.compare_amounts(inv.amount_total, parsed_inv["BT-112"])
         )
-        # Check that we have an adjustment line
-        self.assertEqual(len(inv.invoice_line_ids), 2)
+        # Check that we have 2 adjustment lines (1 per tax)
+        self.assertEqual(len(inv.invoice_line_ids), 3)
 
     def test_import_out_invoice(self):
         parsed_inv = {

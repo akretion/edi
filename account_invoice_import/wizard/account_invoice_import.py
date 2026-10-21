@@ -1,5 +1,6 @@
 # Copyright 2015-2021 Akretion France (http://www.akretion.com/)
 # Copyright 2020-2021 Therp BV (https://therp.nl)
+# Copyright 2026 Michael Tietz (MT Software) <mtietz@mt-software.de>
 # @author: Alexis de Lattre <alexis.delattre@akretion.com>
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
@@ -512,7 +513,7 @@ class AccountInvoiceImport(models.TransientModel):
             )
         else:
             taxes = import_config.get("taxes")
-        fp = cpartner and cpartner.property_account_position_id or False
+        fp = self._get_fiscal_position(cpartner, import_config)
         if fp and taxes:
             taxes = fp.map_tax(taxes)
         if taxes:
@@ -522,6 +523,15 @@ class AccountInvoiceImport(models.TransientModel):
         else:
             lvals["price_unit"] = parsed_inv.get("BT-109")
         return lvals
+
+    def _get_fiscal_position(self, partner, import_config, partner_shipping=None):
+        """Get the fiscal position with same rules than invoice manual creation"""
+        # :arg partner_shipping: may be inherited
+        return partner and (
+            self.env["account.fiscal.position"]
+            .with_company(import_config["company"])
+            ._get_fiscal_position(partner, partner_shipping)
+        )
 
     @api.model
     def _prepare_line_vals_bg23(
@@ -564,7 +574,7 @@ class AccountInvoiceImport(models.TransientModel):
                 "commercial_partner"
             )  # already has with_company
             if cpartner:
-                fp = cpartner and cpartner.property_account_position_id or False
+                fp = self._get_fiscal_position(cpartner, import_config)
                 if fp:
                     account = fp.map_account(account)
             lvals["account_id"] = account.id
@@ -597,7 +607,7 @@ class AccountInvoiceImport(models.TransientModel):
                 lambda tax: tax.company_id == import_config["company"]
             )
             # TODO replace by tax_include equivalent ?
-            fp = partner and partner.property_account_position_id or False
+            fp = self._get_fiscal_position(partner, import_config)
             if fp and taxes:
                 taxes = fp.map_tax(taxes)
         else:

@@ -2,6 +2,7 @@
 # @author: Alexis de Lattre <alexis.delattre@akretion.com>
 # Copyright 2022 Camptocamp SA
 # @author: Simone Orsi <simahawk@gmail.com>
+# Copyright 2026 Michael Tietz (MT Software) <mtietz@mt-software.de>
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
 import unittest.mock
@@ -420,3 +421,82 @@ Nina
         price_prec = self.env["decimal.precision"].precision_get("Product Price")
         self.assertTrue(float_is_zero(iline.price_unit, precision_digits=price_prec))
         self.assertTrue(self.company.currency_id.is_zero(iline.price_subtotal))
+
+    def test_import_in_invoice_fiscal_position_shrink_line(self):
+        """
+        The auto-applied fiscal position of the partner maps account and taxes.
+        (!) This is only with "shrink lines" on the partner: else, in_invoice should
+            already have correct taxes.
+        """
+        partner = self.env["res.partner"].create(
+            {
+                "is_company": True,
+                "name": "AII Fiscal Position Supplier",
+                "country_id": self.env.ref("base.be").id,
+                "vat": "FR23334175221",
+                "invoice_import_shrink_lines": "single",
+            }
+        )
+        dest_account = self.env["account.account"].create(
+            {
+                "code": "613AII",
+                "name": "Fiscal position expense account invoice import",
+                "account_type": "expense",
+                "company_ids": [Command.set([self.company.id])],
+            }
+        )
+        dest_tax = self.purchase_tax.copy(
+            {"name": "Test 0% VAT", "description": "ZZ-VAT-buy-0.0", "amount": 0}
+        )
+        self.env["account.fiscal.position"].create(
+            {
+                "name": "AII Belgium",
+                "company_id": self.company.id,
+                "auto_apply": True,
+                "country_id": self.env.ref("base.be").id,
+                "sequence": 1,
+                "account_ids": [
+                    Command.create(
+                        {
+                            "account_src_id": self.expense_account.id,
+                            "account_dest_id": dest_account.id,
+                        }
+                    )
+                ],
+                "tax_ids": [
+                    Command.create(
+                        {
+                            "tax_src_id": self.purchase_tax.id,
+                            "tax_dest_id": dest_tax.id,
+                        }
+                    )
+                ],
+            }
+        )
+        parsed_inv = {
+            "BT-2": "2017-08-16",
+            "BT-109": 100.0,
+            "BT-112": 100.0,
+            "BG-4": {"vat_identifier": partner.vat},
+            "BG-25": [
+                {
+                    "BT-126": 1,
+                    "BT-129": 2,
+                    "BT-146": 50,
+                    "BT-153": "Super test product",
+                    "BT-156": "AII-TEST-PRODUCT",
+                }
+            ],
+        }
+        import_config = {
+            "account": self.expense_account,
+            "taxes": self.purchase_tax,
+            "company": self.company,
+        }
+        inv = self.env["account.invoice.import"].create_invoice(
+            parsed_inv, import_config
+        )
+        self.assertEqual(inv.partner_id, partner)
+        self.assertEqual(len(inv.invoice_line_ids), 1)
+        self.assertEqual(inv.invoice_line_ids.account_id, dest_account)
+        self.assertEqual(inv.invoice_line_ids.tax_ids, dest_tax)

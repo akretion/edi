@@ -57,9 +57,12 @@ class AccountInvoiceImportSimplePdfInvoiceNumber(models.Model):
             ("letter_lower", "Lower Letter"),
             ("digit", "Digit(s)"),
             ("space", "Space"),
+            ("char", "Any Character"),
+            ("year1", "Year on 1 digit"),
             ("year2", "Year on 2 digits"),
             ("year4", "Year on 4 digits"),
             ("month", "Month (2 digits)"),
+            ("day", "Day on 2 digits"),
         ]
 
     @api.constrains("string_type", "fixed_char", "occurrence_min", "occurrence_max")
@@ -69,7 +72,13 @@ class AccountInvoiceImportSimplePdfInvoiceNumber(models.Model):
                 fixed_char_stripped = rec.fixed_char and rec.fixed_char.strip()
                 if not fixed_char_stripped:
                     raise ValidationError(self.env._("Missing fixed char."))
-            elif rec.string_type in ("letter_upper", "letter_lower", "digit", "space"):
+            elif rec.string_type in (
+                "letter_upper",
+                "letter_lower",
+                "digit",
+                "space",
+                "char",
+            ):
                 if rec.occurrence_max < rec.occurrence_min:
                     raise ValidationError(
                         self.env._(
@@ -93,25 +102,36 @@ class AccountInvoiceImportSimplePdfInvoiceNumber(models.Model):
             "letter_lower": "[a-z]",
             "digit": r"\d",
             "space": r"\s",
+            "char": r"\w",
         }
         if self.string_type == "fixed":
             regex_list.append(regex.escape(self.fixed_char.strip()))
-        elif self.string_type in ("letter_upper", "letter_lower", "digit", "space"):
+        elif self.string_type in (
+            "letter_upper",
+            "letter_lower",
+            "digit",
+            "space",
+            "char",
+        ):
             if self.occurrence_min == self.occurrence_max:
                 suffix = "{%d}" % self.occurrence_min
             else:
                 suffix = "{%d,%d}" % (self.occurrence_min, self.occurrence_max)
 
             regex_list.append(type2regex[self.string_type] + suffix)
-        elif self.string_type in ("year2", "year4"):
+        elif self.string_type in ("year1", "year2", "year4"):
             # match on current and previous year only
             current_year = fields.Date.context_today(self).year
 
             years = [current_year - y for y in range(MAX_PAST_YEARS + 1)]
             if self.string_type == "year2":
                 years_str = [str(y)[-2:] for y in years]
+            elif self.string_type == "year1":
+                years_str = [str(y)[-1:] for y in years]
             else:
                 years_str = [str(y) for y in years]
             regex_list.append(f"(?:{'|'.join(years_str)})")
         elif self.string_type == "month":
             regex_list.append("(?:01|02|03|04|05|06|07|08|09|10|11|12)")
+        elif self.string_type == "day":
+            regex_list.append("(?:0[1-9]|1[0-9]|2[0-9]|3[01])")

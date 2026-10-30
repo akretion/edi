@@ -151,7 +151,7 @@ class AccountInvoiceImport(models.TransientModel):
             parsed_inv["BT-109"] = parsed_inv["BT-112"]
 
     @api.model
-    def _prepare_create_invoice_no_partner(self, parsed_inv, import_config, vals):
+    def _prepare_create_invoice_no_partner(self, parsed_inv, import_config, vals):  # noqa: C901
         if import_config.get("email_from"):
             vals["invoice_source_email"] = import_config["email_from"]
         partner_dict = self._get_partner_dict(parsed_inv, import_config)
@@ -301,7 +301,7 @@ class AccountInvoiceImport(models.TransientModel):
         return forced_journal_id
 
     @api.model
-    def _prepare_create_invoice_vals(self, parsed_inv, import_config):
+    def _prepare_create_invoice_vals(self, parsed_inv, import_config):  # noqa: C901
         company = import_config["company"]
         refund = False
         if parsed_inv.get("BT-3"):

@@ -995,17 +995,41 @@ class AccountInvoiceImport(models.TransientModel):
         ]
         if import_config["invoice_type"] == "in":
             commercial_partner = import_config.get("partner")
-            if not commercial_partner:
+            # I think we should also raise an error when the same invoice
+            # is imported twice and no partner matched
+            # I know that different partners can have the same invoice number but
+            # you should have just a few draft invoices without partner and,
+            # among those few draft invoices without partner, the probability
+            # that there are 2 invoices from different suppliers with the same
+            # invoice number is very low (and we add the invoice date criteria in
+            # the search in this case)
+            # If you don't like this behavior, you can disable it by setting
+            # 'disable_existing_invoice_check_when_no_partner_matched' to True
+            # in import_config
+            if not commercial_partner and import_config.get(
+                "disable_existing_invoice_check_when_no_partner_matched"
+            ):
                 return False
             move_type = is_refund and "in_refund" or "in_invoice"
             domain += [
                 ("move_type", "=", move_type),
-                ("commercial_partner_id", "=", commercial_partner.id),
                 ("ref", "=like", invoice_number),
             ]
+            if commercial_partner:
+                domain.append(("commercial_partner_id", "=", commercial_partner.id))
+                partner_name = commercial_partner.display_name
+            else:
+                # to lower the risk of wrong match when partner is not set
+                # I add the invoice_date criteria
+                domain += [
+                    ("commercial_partner_id", "=", False),
+                    ("invoice_date", "=", parsed_inv.get("BT-2")),
+                ]
+                partner_name = "-partner not set-"
+
             match_log = (
                 f"with move type '{move_type}' partner "
-                f"'{commercial_partner.display_name}' and reference '{invoice_number}'"
+                f"'{partner_name}' and reference '{invoice_number}'"
             )
         else:
             move_type = is_refund and "out_refund" or "out_invoice"

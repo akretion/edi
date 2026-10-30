@@ -294,10 +294,22 @@ class AccountInvoiceImport(models.TransientModel):
             "invoice_date": parsed_inv.get("BT-2"),
             "invoice_line_ids": [],
             "currency_id": import_config["invoice_currency"].id,
+            "imported": True,
         }
         if import_config["invoice_type"] == "in":
-            vals["move_type"] = refund and "in_refund" or "in_invoice"
-            vals["ref"] = parsed_inv.get("BT-1")
+            vals.update(
+                {
+                    "move_type": refund and "in_refund" or "in_invoice",
+                    "ref": parsed_inv.get("BT-1"),
+                    "import_check_total": parsed_inv["BT-112"],
+                }
+            )
+            # if the module account_invoice_check_total from OCA/account-invoicing
+            # is installed (we now also have our own mecanism for that with the
+            # field import_check_total, but that only applies to imported
+            # invoices, not to manually encoded invoices
+            if hasattr(self.env["account.move"], "check_total"):
+                vals["check_total"] = parsed_inv["BT-112"]
         else:
             vals["move_type"] = refund and "out_refund" or "out_invoice"
             if parsed_inv.get("BT-1"):
@@ -402,9 +414,6 @@ class AccountInvoiceImport(models.TransientModel):
         else:
             lvals = self._prepare_line_vals_single(parsed_inv, import_config, vals)
             vals["invoice_line_ids"].append(Command.create(lvals))
-        # if module account_invoice_check_total from OCA/account-invoicing is installed
-        # Maybe we should depend on this module... ? Or have the equivalent
-        # that we only "enable" when importing an e-invoice ?
         attachment_ids = []
         for attach_dict in parsed_inv.get("BG-24") or []:
             if attach_dict.get("BT-125") and attach_dict.get("BT-125-2"):
@@ -450,8 +459,6 @@ class AccountInvoiceImport(models.TransientModel):
                 label = self.env._("Notes extracted from the electronic invoice:")
                 narration = f"<p>{label}</p>{narration}"
             vals["narration"] = narration
-        if hasattr(self.env["account.move"], "check_total"):
-            vals["check_total"] = parsed_inv["BT-112"]
         vals["import_warnings"] = self._prepare_import_warnings(import_config)
         if import_config.get("invoice_extra_vals") and isinstance(
             import_config["invoice_extra_vals"], dict

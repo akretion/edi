@@ -36,6 +36,7 @@ try:
         get_flavor,
         is_credit_note,
         parse_ubl_cii_xml,
+        untdid4461_to_text_code,
         untdid_get_label,
     )
 except (OSError, ImportError) as err:
@@ -230,6 +231,23 @@ class AccountInvoiceImport(models.TransientModel):
                 value = partner_dict.get(partner_dict_key)
                 if value and isinstance(value, str) and hasattr(rpo, odoo_field):
                     partner_data[odoo_field] = value
+            if (
+                import_config["create_bank_account"]
+                and untdid4461_to_text_code(parsed_inv.get("BT-81"))
+                == "credit_transfer"
+                and parsed_inv.get("BT-84")
+            ):
+                sanitized_acc_number = sanitize_account_number(parsed_inv["BT-84"])
+                warning = self._bank_account_creation_warning(
+                    sanitized_acc_number, parsed_inv, import_config
+                )
+                if not warning:
+                    bank_account_vals = {"acc_number": parsed_inv["BT-84"]}
+                    if parsed_inv.get("BT-86"):
+                        bank_id = self._get_bank_from_bic(parsed_inv["BT-86"])
+                        if bank_id:
+                            bank_account_vals["bank_id"] = bank_id
+                    partner_data["bank_ids"] = [bank_account_vals]
             vals["import_partner_data"] = partner_data
 
     @api.model
@@ -318,16 +336,17 @@ class AccountInvoiceImport(models.TransientModel):
         cpartner = import_config.get("commercial_partner")
         if partner:
             vals["partner_id"] = partner.id
-            wire_transfer_codes = ("30", "42", "52", "58")
             out_pay_method_line = cpartner.property_outbound_payment_method_line_id
             if (
                 parsed_inv.get("BT-81")
-                and parsed_inv["BT-81"] in wire_transfer_codes
+                and untdid4461_to_text_code(parsed_inv["BT-81"]) == "credit_transfer"
                 and parsed_inv.get("BT-84")
                 and vals["move_type"] == "in_invoice"
                 and out_pay_method_line
-                and out_pay_method_line.payment_method_id.unece_code
-                in wire_transfer_codes
+                and untdid4461_to_text_code(
+                    out_pay_method_line.payment_method_id.unece_code
+                )
+                == "credit_transfer"
             ):
                 partner_bank = self._match_bank_account(
                     cpartner,
@@ -2046,52 +2065,13 @@ class AccountInvoiceImport(models.TransientModel):
             if import_config["create_bank_account"]:
                 bank_id = False
                 bic = parsed_inv.get("BT-86")
-                if bic and len(bic) in (8, 11):
-                    if len(bic) == 8:
-                        alt_bic = f"{bic}XXX"
-                        bank_domain = [("bic", "in", (bic, alt_bic))]
-                    elif len(bic) == 11 and bic.endswith("XXX"):
-                        alt_bic = bic[:8]
-                        bank_domain = [("bic", "in", (bic, alt_bic))]
-                    else:
-                        bank_domain = [("bic", "=", bic)]
-                    bank_ids = list(self.env["res.bank"]._search(bank_domain, limit=1))
-                    bank_id = bank_ids and bank_ids[0] or False
-                country_id2code = import_config["speedy"]["country_id2code"]
-                # for SEPA countries, we don't create bank accounts that are not
-                # IBANs and where the bank account number doesn't start with the
-                # country code
-                sepa_country_group = self.env.ref("base.sepa_zone")
-                sepa_country_codes = [
-                    country_id2code[country.id]
-                    for country in sepa_country_group.country_ids
-                    if country_id2code.get(country.id)
-                ]
-                vendor_country_code = parsed_inv.get("BG-4", {}).get("country_code")
-                if vendor_country_code and vendor_country_code in sepa_country_codes:
-                    if not iban_is_valid(sanitized_acc_number):
-                        import_config["global_warnings"].append(
-                            self.env._(
-                                "Bank account '%(acc_number)s' hasn't been created "
-                                "automatically because the vendor's country is in the "
-                                "SEPA zone and the bank account number is <strong>not "
-                                "a valid IBAN</strong>.",
-                                acc_number=sanitized_acc_number,
-                            )
-                        )
-                        return False
-                    if not sanitized_acc_number.startswith(vendor_country_code):
-                        import_config["global_warnings"].append(
-                            self.env._(
-                                "Bank account '%(acc_number)s' hasn't been created "
-                                "automatically because the vendor's country "
-                                "(%(vendor_country_code)s) is different from the "
-                                "country of the IBAN.",
-                                acc_number=sanitized_acc_number,
-                                vendor_country_code=vendor_country_code,
-                            )
-                        )
-                        return False
+                bank_id = self._get_bank_from_bic(bic)
+                warning = self._bank_account_creation_warning(
+                    sanitized_acc_number, parsed_inv, import_config
+                )
+                if warning:
+                    import_config["global_warnings"].append(warning)
+                    return False
                 vals = {
                     "partner_id": commercial_partner.id,
                     "acc_number": sanitized_acc_number,
@@ -2126,6 +2106,58 @@ class AccountInvoiceImport(models.TransientModel):
                 )
                 return bank_account
         return False
+
+    @api.model
+    def _get_bank_from_bic(self, bic):
+        bank_id = False
+        if bic and len(bic) in (8, 11):
+            if len(bic) == 8:
+                alt_bic = f"{bic}XXX"
+                bank_domain = [("bic", "in", (bic, alt_bic))]
+            elif len(bic) == 11 and bic.endswith("XXX"):
+                alt_bic = bic[:8]
+                bank_domain = [("bic", "in", (bic, alt_bic))]
+            else:
+                bank_domain = [("bic", "=", bic)]
+            bank_ids = list(self.env["res.bank"]._search(bank_domain, limit=1))
+            bank_id = bank_ids and bank_ids[0] or False
+        return bank_id
+
+    @api.model
+    def _bank_account_creation_warning(
+        self, sanitized_acc_number, parsed_inv, import_config
+    ):
+        warning = None
+        country_id2code = import_config["speedy"]["country_id2code"]
+        # for SEPA countries, we don't create bank accounts that are not
+        # IBANs and where the bank account number doesn't start with the
+        # country code
+        sepa_country_group = self.env.ref("base.sepa_zone")
+        sepa_country_codes = [
+            country_id2code[country.id]
+            for country in sepa_country_group.country_ids
+            if country_id2code.get(country.id)
+        ]
+        vendor_country_code = parsed_inv.get("BG-4", {}).get("country_code")
+        if vendor_country_code and vendor_country_code in sepa_country_codes:
+            if not iban_is_valid(sanitized_acc_number):
+                warning = self.env._(
+                    "Bank account '%(acc_number)s' hasn't been created "
+                    "automatically because the vendor's country is in the "
+                    "SEPA zone and the bank account number is <strong>not "
+                    "a valid IBAN</strong>.",
+                    acc_number=sanitized_acc_number,
+                )
+            elif not sanitized_acc_number.startswith(vendor_country_code):
+                warning = self.env._(
+                    "Bank account '%(acc_number)s' hasn't been created "
+                    "automatically because the vendor's country "
+                    "(%(vendor_country_code)s) is different from the "
+                    "country of the IBAN.",
+                    acc_number=sanitized_acc_number,
+                    vendor_country_code=vendor_country_code,
+                )
+        return warning
 
     @api.model
     def _info_log(self, import_config, msg):

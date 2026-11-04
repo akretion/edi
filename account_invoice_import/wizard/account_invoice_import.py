@@ -1,5 +1,6 @@
 # Copyright 2015-2021 Akretion France (http://www.akretion.com/)
 # Copyright 2020-2021 Therp BV (https://therp.nl)
+# Copyright 2026 Michael Tietz (MT Software) <mtietz@mt-software.de>
 # @author: Alexis de Lattre <alexis.delattre@akretion.com>
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
@@ -36,6 +37,7 @@ try:
         get_flavor,
         is_credit_note,
         parse_ubl_cii_xml,
+        untdid4461_to_text_code,
         untdid_get_label,
     )
 except (OSError, ImportError) as err:
@@ -150,7 +152,7 @@ class AccountInvoiceImport(models.TransientModel):
             parsed_inv["BT-109"] = parsed_inv["BT-112"]
 
     @api.model
-    def _prepare_create_invoice_no_partner(self, parsed_inv, import_config, vals):
+    def _prepare_create_invoice_no_partner(self, parsed_inv, import_config, vals):  # noqa: C901
         if import_config.get("email_from"):
             vals["invoice_source_email"] = import_config["email_from"]
         partner_dict = self._get_partner_dict(parsed_inv, import_config)
@@ -230,6 +232,23 @@ class AccountInvoiceImport(models.TransientModel):
                 value = partner_dict.get(partner_dict_key)
                 if value and isinstance(value, str) and hasattr(rpo, odoo_field):
                     partner_data[odoo_field] = value
+            if (
+                import_config["create_bank_account"]
+                and untdid4461_to_text_code(parsed_inv.get("BT-81"))
+                == "credit_transfer"
+                and parsed_inv.get("BT-84")
+            ):
+                sanitized_acc_number = sanitize_account_number(parsed_inv["BT-84"])
+                warning = self._bank_account_creation_warning(
+                    sanitized_acc_number, parsed_inv, import_config
+                )
+                if not warning:
+                    bank_account_vals = {"acc_number": parsed_inv["BT-84"]}
+                    if parsed_inv.get("BT-86"):
+                        bank_id = self._get_bank_from_bic(parsed_inv["BT-86"])
+                        if bank_id:
+                            bank_account_vals["bank_id"] = bank_id
+                    partner_data["bank_ids"] = [bank_account_vals]
             vals["import_partner_data"] = partner_data
 
     @api.model
@@ -294,10 +313,22 @@ class AccountInvoiceImport(models.TransientModel):
             "invoice_date": parsed_inv.get("BT-2"),
             "invoice_line_ids": [],
             "currency_id": import_config["invoice_currency"].id,
+            "imported": True,
         }
         if import_config["invoice_type"] == "in":
-            vals["move_type"] = refund and "in_refund" or "in_invoice"
-            vals["ref"] = parsed_inv.get("BT-1")
+            vals.update(
+                {
+                    "move_type": refund and "in_refund" or "in_invoice",
+                    "ref": parsed_inv.get("BT-1"),
+                    "import_check_total": parsed_inv["BT-112"],
+                }
+            )
+            # if the module account_invoice_check_total from OCA/account-invoicing
+            # is installed (we now also have our own mecanism for that with the
+            # field import_check_total, but that only applies to imported
+            # invoices, not to manually encoded invoices
+            if hasattr(self.env["account.move"], "check_total"):
+                vals["check_total"] = parsed_inv["BT-112"]
         else:
             vals["move_type"] = refund and "out_refund" or "out_invoice"
             if parsed_inv.get("BT-1"):
@@ -306,16 +337,17 @@ class AccountInvoiceImport(models.TransientModel):
         cpartner = import_config.get("commercial_partner")
         if partner:
             vals["partner_id"] = partner.id
-            wire_transfer_codes = ("30", "42", "52", "58")
             out_pay_method_line = cpartner.property_outbound_payment_method_line_id
             if (
                 parsed_inv.get("BT-81")
-                and parsed_inv["BT-81"] in wire_transfer_codes
+                and untdid4461_to_text_code(parsed_inv["BT-81"]) == "credit_transfer"
                 and parsed_inv.get("BT-84")
                 and vals["move_type"] == "in_invoice"
                 and out_pay_method_line
-                and out_pay_method_line.payment_method_id.unece_code
-                in wire_transfer_codes
+                and untdid4461_to_text_code(
+                    out_pay_method_line.payment_method_id.unece_code
+                )
+                == "credit_transfer"
             ):
                 partner_bank = self._match_bank_account(
                     cpartner,
@@ -402,9 +434,6 @@ class AccountInvoiceImport(models.TransientModel):
         else:
             lvals = self._prepare_line_vals_single(parsed_inv, import_config, vals)
             vals["invoice_line_ids"].append(Command.create(lvals))
-        # if module account_invoice_check_total from OCA/account-invoicing is installed
-        # Maybe we should depend on this module... ? Or have the equivalent
-        # that we only "enable" when importing an e-invoice ?
         attachment_ids = []
         for attach_dict in parsed_inv.get("BG-24") or []:
             if attach_dict.get("BT-125") and attach_dict.get("BT-125-2"):
@@ -450,8 +479,6 @@ class AccountInvoiceImport(models.TransientModel):
                 label = self.env._("Notes extracted from the electronic invoice:")
                 narration = f"<p>{label}</p>{narration}"
             vals["narration"] = narration
-        if hasattr(self.env["account.move"], "check_total"):
-            vals["check_total"] = parsed_inv["BT-112"]
         vals["import_warnings"] = self._prepare_import_warnings(import_config)
         if import_config.get("invoice_extra_vals") and isinstance(
             import_config["invoice_extra_vals"], dict
@@ -512,7 +539,7 @@ class AccountInvoiceImport(models.TransientModel):
             )
         else:
             taxes = import_config.get("taxes")
-        fp = cpartner and cpartner.property_account_position_id or False
+        fp = self._get_fiscal_position(cpartner, import_config)
         if fp and taxes:
             taxes = fp.map_tax(taxes)
         if taxes:
@@ -522,6 +549,15 @@ class AccountInvoiceImport(models.TransientModel):
         else:
             lvals["price_unit"] = parsed_inv.get("BT-109")
         return lvals
+
+    def _get_fiscal_position(self, partner, import_config, partner_shipping=None):
+        """Get the fiscal position with same rules than invoice manual creation"""
+        # :arg partner_shipping: may be inherited
+        return partner and (
+            self.env["account.fiscal.position"]
+            .with_company(import_config["company"])
+            ._get_fiscal_position(partner, partner_shipping)
+        )
 
     @api.model
     def _prepare_line_vals_bg23(
@@ -564,7 +600,7 @@ class AccountInvoiceImport(models.TransientModel):
                 "commercial_partner"
             )  # already has with_company
             if cpartner:
-                fp = cpartner and cpartner.property_account_position_id or False
+                fp = self._get_fiscal_position(cpartner, import_config)
                 if fp:
                     account = fp.map_account(account)
             lvals["account_id"] = account.id
@@ -597,7 +633,7 @@ class AccountInvoiceImport(models.TransientModel):
                 lambda tax: tax.company_id == import_config["company"]
             )
             # TODO replace by tax_include equivalent ?
-            fp = partner and partner.property_account_position_id or False
+            fp = self._get_fiscal_position(partner, import_config)
             if fp and taxes:
                 taxes = fp.map_tax(taxes)
         else:
@@ -969,17 +1005,41 @@ class AccountInvoiceImport(models.TransientModel):
         ]
         if import_config["invoice_type"] == "in":
             commercial_partner = import_config.get("partner")
-            if not commercial_partner:
+            # I think we should also raise an error when the same invoice
+            # is imported twice and no partner matched
+            # I know that different partners can have the same invoice number but
+            # you should have just a few draft invoices without partner and,
+            # among those few draft invoices without partner, the probability
+            # that there are 2 invoices from different suppliers with the same
+            # invoice number is very low (and we add the invoice date criteria in
+            # the search in this case)
+            # If you don't like this behavior, you can disable it by setting
+            # 'disable_existing_invoice_check_when_no_partner_matched' to True
+            # in import_config
+            if not commercial_partner and import_config.get(
+                "disable_existing_invoice_check_when_no_partner_matched"
+            ):
                 return False
             move_type = is_refund and "in_refund" or "in_invoice"
             domain += [
                 ("move_type", "=", move_type),
-                ("commercial_partner_id", "=", commercial_partner.id),
                 ("ref", "=like", invoice_number),
             ]
+            if commercial_partner:
+                domain.append(("commercial_partner_id", "=", commercial_partner.id))
+                partner_name = commercial_partner.display_name
+            else:
+                # to lower the risk of wrong match when partner is not set
+                # I add the invoice_date criteria
+                domain += [
+                    ("commercial_partner_id", "=", False),
+                    ("invoice_date", "=", parsed_inv.get("BT-2")),
+                ]
+                partner_name = "-partner not set-"
+
             match_log = (
                 f"with move type '{move_type}' partner "
-                f"'{commercial_partner.display_name}' and reference '{invoice_number}'"
+                f"'{partner_name}' and reference '{invoice_number}'"
             )
         else:
             move_type = is_refund and "out_refund" or "out_invoice"
@@ -1640,6 +1700,7 @@ class AccountInvoiceImport(models.TransientModel):
             for i in range(len(parsed_inv["BG-25"])):
                 if "BT-131" not in parsed_inv["BG-25"][i]:
                     continue
+                # TODO continue... at the moment, it will quit here
                 iline = invoice.invoice_line_ids[i]
                 odoo_subtotal = iline.price_subtotal
                 parsed_subtotal = parsed_inv["BG-25"][i]["BT-131"]
@@ -1962,23 +2023,43 @@ class AccountInvoiceImport(models.TransientModel):
                 + [
                     ("product_code", "=", line_dict["BT-155"]),
                     ("partner_id", "=", import_config["commercial_partner"].id),
+                    "|",
+                    ("product_id", "!=", False),
+                    ("product_tmpl_id", "!=", False),
                 ],
                 limit=1,
             )
             if sinfo:
-                msg = (
-                    f"{msg_prefix} product {product.display_name} matched "
-                    "via seller product identifier (BT-155)"
-                )
                 if sinfo.product_id:
+                    product = sinfo.product_id
+                    msg = (
+                        f"{msg_prefix} product {product.display_name} matched "
+                        "via seller product identifier (BT-155)"
+                    )
                     self._info_log(import_config, msg)
-                    return sinfo.product_id
-                if (
-                    sinfo.product_tmpl_id
-                    and len(sinfo.product_tmpl_id.product_variant_ids) == 1
-                ):
-                    self._info_log(import_config, msg)
-                    return sinfo.product_tmpl_id.product_variant_ids
+                    return product
+                else:
+                    product_template = sinfo.product_tmpl_id
+                    assert product_template
+                    if len(product_template.product_variant_ids) == 1:
+                        product = sinfo.product_tmpl_id.product_variant_ids
+                        msg = (
+                            f"{msg_prefix} product {product.display_name} matched "
+                            "via seller product identifier (BT-155)"
+                        )
+                        self._info_log(import_config, msg)
+                        return product
+                    elif len(product_template.product_variant_ids) > 1:
+                        product = product_template.product_variant_ids[0]
+                        msg = (
+                            f"{msg_prefix} product template "
+                            "{product_template.display_name} matched "
+                            "via seller product identifier (BT-155), but this "
+                            "product template is multi-variant. First variant "
+                            "{product.display_name} selected."
+                        )
+                        self._warning_log(import_config, msg)
+                        return product
             else:
                 msg = (
                     f"{msg_prefix} no product with code '{line_dict['BT-155']}' "
@@ -2111,52 +2192,13 @@ class AccountInvoiceImport(models.TransientModel):
             if import_config["create_bank_account"]:
                 bank_id = False
                 bic = parsed_inv.get("BT-86")
-                if bic and len(bic) in (8, 11):
-                    if len(bic) == 8:
-                        alt_bic = f"{bic}XXX"
-                        bank_domain = [("bic", "in", (bic, alt_bic))]
-                    elif len(bic) == 11 and bic.endswith("XXX"):
-                        alt_bic = bic[:8]
-                        bank_domain = [("bic", "in", (bic, alt_bic))]
-                    else:
-                        bank_domain = [("bic", "=", bic)]
-                    bank_ids = list(self.env["res.bank"]._search(bank_domain, limit=1))
-                    bank_id = bank_ids and bank_ids[0] or False
-                country_id2code = import_config["speedy"]["country_id2code"]
-                # for SEPA countries, we don't create bank accounts that are not
-                # IBANs and where the bank account number doesn't start with the
-                # country code
-                sepa_country_group = self.env.ref("base.sepa_zone")
-                sepa_country_codes = [
-                    country_id2code[country.id]
-                    for country in sepa_country_group.country_ids
-                    if country_id2code.get(country.id)
-                ]
-                vendor_country_code = parsed_inv.get("BG-4", {}).get("country_code")
-                if vendor_country_code and vendor_country_code in sepa_country_codes:
-                    if not iban_is_valid(sanitized_acc_number):
-                        import_config["global_warnings"].append(
-                            self.env._(
-                                "Bank account '%(acc_number)s' hasn't been created "
-                                "automatically because the vendor's country is in the "
-                                "SEPA zone and the bank account number is <strong>not "
-                                "a valid IBAN</strong>.",
-                                acc_number=sanitized_acc_number,
-                            )
-                        )
-                        return False
-                    if not sanitized_acc_number.startswith(vendor_country_code):
-                        import_config["global_warnings"].append(
-                            self.env._(
-                                "Bank account '%(acc_number)s' hasn't been created "
-                                "automatically because the vendor's country "
-                                "(%(vendor_country_code)s) is different from the "
-                                "country of the IBAN.",
-                                acc_number=sanitized_acc_number,
-                                vendor_country_code=vendor_country_code,
-                            )
-                        )
-                        return False
+                bank_id = self._get_bank_from_bic(bic)
+                warning = self._bank_account_creation_warning(
+                    sanitized_acc_number, parsed_inv, import_config
+                )
+                if warning:
+                    import_config["global_warnings"].append(warning)
+                    return False
                 vals = {
                     "partner_id": commercial_partner.id,
                     "acc_number": sanitized_acc_number,
@@ -2191,6 +2233,58 @@ class AccountInvoiceImport(models.TransientModel):
                 )
                 return bank_account
         return False
+
+    @api.model
+    def _get_bank_from_bic(self, bic):
+        bank_id = False
+        if bic and len(bic) in (8, 11):
+            if len(bic) == 8:
+                alt_bic = f"{bic}XXX"
+                bank_domain = [("bic", "in", (bic, alt_bic))]
+            elif len(bic) == 11 and bic.endswith("XXX"):
+                alt_bic = bic[:8]
+                bank_domain = [("bic", "in", (bic, alt_bic))]
+            else:
+                bank_domain = [("bic", "=", bic)]
+            bank_ids = list(self.env["res.bank"]._search(bank_domain, limit=1))
+            bank_id = bank_ids and bank_ids[0] or False
+        return bank_id
+
+    @api.model
+    def _bank_account_creation_warning(
+        self, sanitized_acc_number, parsed_inv, import_config
+    ):
+        warning = None
+        country_id2code = import_config["speedy"]["country_id2code"]
+        # for SEPA countries, we don't create bank accounts that are not
+        # IBANs and where the bank account number doesn't start with the
+        # country code
+        sepa_country_group = self.env.ref("base.sepa_zone")
+        sepa_country_codes = [
+            country_id2code[country.id]
+            for country in sepa_country_group.country_ids
+            if country_id2code.get(country.id)
+        ]
+        vendor_country_code = parsed_inv.get("BG-4", {}).get("country_code")
+        if vendor_country_code and vendor_country_code in sepa_country_codes:
+            if not iban_is_valid(sanitized_acc_number):
+                warning = self.env._(
+                    "Bank account '%(acc_number)s' hasn't been created "
+                    "automatically because the vendor's country is in the "
+                    "SEPA zone and the bank account number is <strong>not "
+                    "a valid IBAN</strong>.",
+                    acc_number=sanitized_acc_number,
+                )
+            elif not sanitized_acc_number.startswith(vendor_country_code):
+                warning = self.env._(
+                    "Bank account '%(acc_number)s' hasn't been created "
+                    "automatically because the vendor's country "
+                    "(%(vendor_country_code)s) is different from the "
+                    "country of the IBAN.",
+                    acc_number=sanitized_acc_number,
+                    vendor_country_code=vendor_country_code,
+                )
+        return warning
 
     @api.model
     def _info_log(self, import_config, msg):

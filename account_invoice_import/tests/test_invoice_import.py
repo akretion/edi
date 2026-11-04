@@ -160,11 +160,12 @@ class TestInvoiceImport(TransactionCase):
             ],
         }
         for import_c in self.all_import_config:
+            import_config = dict(import_c, purchase_journal=self.pur_journal2)
             # hack to have a unique vendor inv ref
             parsed_inv["BT-1"] = f"INV-{randint(100000, 999999)}"
             import_c["purchase_journal"] = self.pur_journal2
             inv = self.env["account.invoice.import"].create_invoice(
-                parsed_inv, import_c
+                parsed_inv, import_config
             )
             self.assertEqual(inv.move_type, "in_invoice")
             self.assertEqual(inv.ref, parsed_inv["BT-1"])
@@ -185,7 +186,7 @@ class TestInvoiceImport(TransactionCase):
             )
             self.assertEqual(inv.journal_id.id, import_c["purchase_journal"].id)
 
-    def test_import_in_invoice_with_global_adjustment(self):
+    def test_import_in_invoice_with_global_adjustments(self):
         parsed_inv = {
             "BT-3": "380",
             "BT-1": "TESTAIIGLOBAL",
@@ -218,8 +219,8 @@ class TestInvoiceImport(TransactionCase):
         self.assertFalse(
             inv.currency_id.compare_amounts(inv.amount_total, parsed_inv["BT-112"])
         )
-        # Check that we have an adjustment line
-        self.assertEqual(len(inv.invoice_line_ids), 2)
+        # Check that we have 2 adjustment lines (1 per tax)
+        self.assertEqual(len(inv.invoice_line_ids), 3)
 
     def test_import_out_invoice(self):
         parsed_inv = {
@@ -246,9 +247,11 @@ class TestInvoiceImport(TransactionCase):
             import_config["invoice_type"] = "out"
             if import_config.get("shrink_lines"):
                 continue
+            import_config = dict(import_c, invoice_type="out")
             inv = self.env["account.invoice.import"].create_invoice(
                 parsed_inv, import_config
             )
+            self.assertEqual(inv.move_type, "out_invoice")
             self.assertFalse(
                 inv.currency_id.compare_amounts(inv.amount_untaxed, 270.00)
             )

@@ -6,7 +6,7 @@ import base64
 
 from odoo import Command, fields
 from odoo.tests.common import TransactionCase, freeze_time
-from odoo.tools import file_open, float_compare
+from odoo.tools import file_open, float_compare, mute_logger
 
 
 class TestInvoiceImportSimplePdf(TransactionCase):
@@ -516,6 +516,7 @@ class TestInvoiceImportSimplePdf(TransactionCase):
         self.assertIn("FR 74 397 480 930", res["first"])
         self.assertIn("FR74397480930", res["first_no_space"])
 
+    @mute_logger("odoo.addons.account_invoice_import.wizard.account_invoice_import")
     def test_complete_import(self):
         wiz = self.env["account.invoice.import"].create(
             {
@@ -568,6 +569,7 @@ class TestInvoiceImportSimplePdf(TransactionCase):
             icpo.create({"key": key, "value": method})
         self.test_complete_import()
 
+    @mute_logger("odoo.addons.account_invoice_import.wizard.account_invoice_import")
     def test_specific_python_methods(self):
         # test only pure-pdf methods
         # because we are sure they work on the Github test environment
